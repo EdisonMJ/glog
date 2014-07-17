@@ -97,7 +97,7 @@ func TestInfo(t *testing.T) {
 }
 
 // Test that the header has the correct format.
-func TestHeader(t *testing.T) {
+func testHeader(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
 	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
@@ -106,8 +106,9 @@ func TestHeader(t *testing.T) {
 	}
 	Info("test")
 	var line, pid int
-	n, err := fmt.Sscanf(contents(infoLog), "I0102 15:04:05.678901 %d glog_test.go:%d] test\n", &pid, &line)
-	if n != 2 || err != nil {
+	var method string
+	n, err := fmt.Sscanf(contents(infoLog), "I0102 15:04:05.678901 %d glog_test.go:%d/%s] test\n", &pid, &line, &method)
+	if n != 3 || err != nil {
 		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
 	}
 }

@@ -394,7 +394,7 @@ type flushSyncWriter interface {
 func init() {
 	flag.BoolVar(&logging.toStderr, "logtostderr", false, "log to standard error instead of files")
 	flag.BoolVar(&logging.alsoToStderr, "alsologtostderr", false, "log to standard error as well as files")
-	flag.Var(&logging.verbosity, "v", "log level for V logs")
+	flag.Var(&logging.verbosity, "vv", "log level for V logs")
 	flag.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr")
 	flag.Var(&logging.vmodule, "vmodule", "comma-separated list of pattern=N settings for file-filtered logging")
 	flag.Var(&logging.traceLocation, "log_backtrace_at", "when logging hits line file:N, emit a stack trace")
@@ -516,7 +516,7 @@ header formats a log header as defined by the C++ implementation.
 It returns a buffer containing the formatted header.
 
 Log lines have this form:
-	Lmmdd hh:mm:ss.uuuuuu threadid file:line] msg...
+	Lmmdd hh:mm:ss.uuuuuu threadid file:line/method] msg...
 where the fields are defined as follows:
 	L                A single character, representing the log level (eg 'I' for INFO)
 	mm               The month (zero padded; ie May is '05')
@@ -525,12 +525,15 @@ where the fields are defined as follows:
 	threadid         The space-padded thread ID as returned by GetTID()
 	file             The file name
 	line             The line number
+	method           The method or function name
 	msg              The user-supplied message
 */
 func (l *loggingT) header(s severity) *buffer {
-	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
+	// Lmmdd hh:mm:ss.uuuuuu threadid file:line/method]
+	var method string
+
 	now := timeNow()
-	_, file, line, ok := runtime.Caller(3) // It's always the same number of frames to the user's call.
+	pc, file, line, ok := runtime.Caller(3) // It's always the same number of frames to the user's call.
 	if !ok {
 		file = "???"
 		line = 1
@@ -539,6 +542,18 @@ func (l *loggingT) header(s severity) *buffer {
 		if slash >= 0 {
 			file = file[slash+1:]
 		}
+
+		me := runtime.FuncForPC(pc)
+		if me == nil {
+			method = "unnamed"
+		} else {
+			method = me.Name()
+			dot := strings.LastIndex(method, ".")
+			if dot >= 0 {
+				method = method[dot+1:]
+			}
+		}
+
 	}
 	if line < 0 {
 		line = 0 // not a real line number, but acceptable to someDigits
@@ -570,9 +585,12 @@ func (l *loggingT) header(s severity) *buffer {
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
-	buf.tmp[n+1] = ']'
-	buf.tmp[n+2] = ' '
-	buf.Write(buf.tmp[:n+3])
+	buf.Write(buf.tmp[:n+1])
+	buf.WriteByte('/')
+	buf.WriteString(method)
+	buf.tmp[0] = ']'
+	buf.tmp[1] = ' '
+	buf.Write(buf.tmp[:2])
 	return buf
 }
 
@@ -633,6 +651,15 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 		buf.WriteByte('\n')
 	}
 	l.output(s, buf)
+}
+
+func (l *loggingT) errorf(s severity, format string, args ...interface{}) error {
+	buf := l.header(s)
+	fmt.Fprintf(buf, format, args...)
+	if buf.Bytes()[buf.Len()-1] != '\n' {
+		buf.WriteByte('\n')
+	}
+	return errors.New(buf.String())
 }
 
 // output writes the data to the log files and releases the buffer.
@@ -1031,4 +1058,8 @@ func Fatalln(args ...interface{}) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Fatalf(format string, args ...interface{}) {
 	logging.printf(fatalLog, format, args...)
+}
+
+func NewError(format string, args ...interface{}) error {
+	return logging.errorf(errorLog, format, args...)
 }
